@@ -89,6 +89,8 @@ class Extension(CastBoolMixin, Plugin):  # pylint: disable=missing-class-docstri
     previously_focused_window: str = ""
     last_focused: Scratch | None = None
 
+    new_windowrule = False
+
     def __init__(self, name: str) -> None:
         super().__init__(name)
         self._hysteresis_tasks = {}
@@ -96,6 +98,8 @@ class Extension(CastBoolMixin, Plugin):  # pylint: disable=missing-class-docstri
         self.get_client_props = staticmethod(partial(get_client_props, logger=self.log))
         Scratch.get_client_props = self.get_client_props
         self.get_monitor_props = staticmethod(partial(get_monitor_props, logger=self.log))
+
+        self.new_windowrule = state.hyprland_version >= VersionInfo(0, 53)
 
     async def exit(self) -> None:
         """Exit hook."""
@@ -170,7 +174,10 @@ class Extension(CastBoolMixin, Plugin):  # pylint: disable=missing-class-docstri
         """Unset the windowrules."""
         defined_class = scratch.conf.get("class", "")
         if defined_class:
-            await self.hyprctl(f"windowrule unset,{self._classify(defined_class)}", "keyword")
+            if self.new_windowrule:
+                await self.hyprctl(f"windowrule[scratchpad-{scratch.uid}]:enable false", "keyword")
+            else:
+                await self.hyprctl(f"windowrule unset,{self._classify(defined_class)}", "keyword")
 
     async def _configure_windowrules(self, scratch: Scratch) -> None:
         """Set initial client window state (sets windowrules)."""
@@ -190,9 +197,17 @@ class Extension(CastBoolMixin, Plugin):  # pylint: disable=missing-class-docstri
             ipc_commands = []
 
             if "float" not in skipped_windowrules:
-                ipc_commands.append(f"windowrule float,{self._classify(defined_class)}")
+                if self.new_windowrule:
+                    ipc_commands.append(f"windowrule[scratchpad-{scratch.uid}]:float on")
+                else:
+                    ipc_commands.append(f"windowrule float,{self._classify(defined_class)}")
             if "workspace" not in skipped_windowrules:
-                ipc_commands.append(f"windowrule workspace {mk_scratch_name(scratch.uid)} silent,{self._classify(defined_class)}")
+                if self.new_windowrule:
+                    ipc_commands.append(
+                        f"windowrule[scratchpad-{scratch.uid}]:workspace {mk_scratch_name(scratch.uid)} silent,match:class {defined_class}"
+                    )
+                else:
+                    ipc_commands.append(f"windowrule workspace {mk_scratch_name(scratch.uid)} silent,{self._classify(defined_class)}")
             set_aspect = "aspect" not in skipped_windowrules
 
             if animation_type:
@@ -209,10 +224,16 @@ class Extension(CastBoolMixin, Plugin):  # pylint: disable=missing-class-docstri
                     "fromleft": f"-200% {margin_y}",
                 }[animation_type]
                 if set_aspect:
-                    ipc_commands.append(f"windowrule move {t_pos},{self._classify(defined_class)}")
+                    if self.new_windowrule:
+                        ipc_commands.append(f"windowrule[scratchpad-{scratch.uid}]:move {t_pos}")
+                    else:
+                        ipc_commands.append(f"windowrule move {t_pos},{self._classify(defined_class)}")
 
             if set_aspect:
-                ipc_commands.append(f"windowrule size {width} {height},{self._classify(defined_class)}")
+                if self.new_windowrule:
+                    ipc_commands.append(f"windowrule[scratchpad-{scratch.uid}]:size {width} {height}")
+                else:
+                    ipc_commands.append(f"windowrule size {width} {height},{self._classify(defined_class)}")
 
             await self.hyprctl(ipc_commands, "keyword")
 
